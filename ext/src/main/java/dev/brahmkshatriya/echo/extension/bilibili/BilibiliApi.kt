@@ -204,10 +204,17 @@ class BilibiliApi {
         return getJson(url)
     }
 
-    // 2. Music Ranking (rid=3 is Music partition on Bilibili: all, origin, rookie)
-    suspend fun getMusicRanking(type: String = "all"): JSONObject {
+    // 2. Music Ranking (rid=3 is Music partition on Bilibili)
+    suspend fun getMusicRanking(): JSONObject {
         ensureGuestIdentity()
-        val url = "https://api.bilibili.com/x/web-interface/ranking/v2?rid=3&type=$type"
+        val url = "https://api.bilibili.com/x/web-interface/ranking/v2?rid=3&type=all"
+        return getJson(url)
+    }
+
+    // 2a. Region Ranking for sub-partitions (rid=28: Original, rid=31: Covers, rid=30: Vocaloid, rid=130: Live)
+    suspend fun getRegionRanking(rid: Int, day: Int = 3): JSONObject {
+        ensureGuestIdentity()
+        val url = "https://api.bilibili.com/x/web-interface/ranking/region?rid=$rid&day=$day"
         return getJson(url)
     }
 

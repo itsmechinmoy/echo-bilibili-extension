@@ -132,49 +132,56 @@ open class BilibiliExtension : ExtensionClient, SearchFeedClient, HomeFeedClient
         )
     }
 
+    private fun extractTracks(json: JSONObject?): List<Track> {
+        if (json == null) return emptyList()
+        val dataObj = json.optJSONObject("data")
+        val array = when {
+            dataObj?.has("list") == true -> dataObj.optJSONArray("list")
+            dataObj?.has("item") == true -> dataObj.optJSONArray("item")
+            dataObj?.has("archives") == true -> dataObj.optJSONArray("archives")
+            json.has("data") && json.optJSONArray("data") != null -> json.optJSONArray("data")
+            else -> null
+        } ?: return emptyList()
+
+        val tracks = mutableListOf<Track>()
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            tracks.add(toTrack(item))
+        }
+        return tracks
+    }
+
     // --- SearchFeedClient ---
     override suspend fun loadSearchFeed(query: String): Feed<Shelf> {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) {
             val paged = PagedData.Single<Shelf> {
                 coroutineScope {
-                    val rankingDeferred = async { runCatching { api.getMusicRanking("all") }.getOrNull() }
-                    val originDeferred = async { runCatching { api.getMusicRanking("origin") }.getOrNull() }
-                    val rookieDeferred = async { runCatching { api.getMusicRanking("rookie") }.getOrNull() }
+                    val rankingDeferred = async { runCatching { api.getMusicRanking() }.getOrNull() }
+                    val originDeferred = async { runCatching { api.getRegionRanking(28) }.getOrNull() }
+                    val coversDeferred = async { runCatching { api.getRegionRanking(31) }.getOrNull() }
                     val classicsDeferred = async { runCatching { api.getPreciousVideos() }.getOrNull() }
 
                     val shelves = mutableListOf<Shelf>()
 
-                    rankingDeferred.await()?.let { json ->
-                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                        val tracks = (0 until list.length()).mapNotNull { list.optJSONObject(it)?.let { item -> toTrack(item) } }
-                        if (tracks.isNotEmpty()) {
-                            shelves.add(Shelf.Lists.Items("search_trending", "Trending Music", tracks))
-                        }
+                    val rankingTracks = extractTracks(rankingDeferred.await())
+                    if (rankingTracks.isNotEmpty()) {
+                        shelves.add(Shelf.Lists.Items("search_trending", "Trending Music", rankingTracks))
                     }
 
-                    originDeferred.await()?.let { json ->
-                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                        val tracks = (0 until list.length()).mapNotNull { list.optJSONObject(it)?.let { item -> toTrack(item) } }
-                        if (tracks.isNotEmpty()) {
-                            shelves.add(Shelf.Lists.Items("search_origin", "Original Music", tracks))
-                        }
+                    val originTracks = extractTracks(originDeferred.await())
+                    if (originTracks.isNotEmpty()) {
+                        shelves.add(Shelf.Lists.Items("search_origin", "Original Music", originTracks))
                     }
 
-                    rookieDeferred.await()?.let { json ->
-                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                        val tracks = (0 until list.length()).mapNotNull { list.optJSONObject(it)?.let { item -> toTrack(item) } }
-                        if (tracks.isNotEmpty()) {
-                            shelves.add(Shelf.Lists.Items("search_rookie", "Rising Creators", tracks))
-                        }
+                    val coversTracks = extractTracks(coversDeferred.await())
+                    if (coversTracks.isNotEmpty()) {
+                        shelves.add(Shelf.Lists.Items("search_covers", "Top Covers", coversTracks))
                     }
 
-                    classicsDeferred.await()?.let { json ->
-                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                        val tracks = (0 until list.length()).mapNotNull { list.optJSONObject(it)?.let { item -> toTrack(item) } }
-                        if (tracks.isNotEmpty()) {
-                            shelves.add(Shelf.Lists.Items("search_classics", "All-Time Classics", tracks))
-                        }
+                    val classicsTracks = extractTracks(classicsDeferred.await())
+                    if (classicsTracks.isNotEmpty()) {
+                        shelves.add(Shelf.Lists.Items("search_classics", "All-Time Classics", classicsTracks))
                     }
 
                     shelves
@@ -223,40 +230,19 @@ open class BilibiliExtension : ExtensionClient, SearchFeedClient, HomeFeedClient
 
                             val shelves = mutableListOf<Shelf>()
 
-                            trendingDeferred.await()?.let { json ->
-                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                                val tracks = mutableListOf<Track>()
-                                for (i in 0 until list.length()) {
-                                    val item = list.optJSONObject(i) ?: continue
-                                    tracks.add(toTrack(item))
-                                }
-                                if (tracks.isNotEmpty()) {
-                                    shelves.add(Shelf.Lists.Items("trending", "Trending Now", tracks))
-                                }
+                            val trendingTracks = extractTracks(trendingDeferred.await())
+                            if (trendingTracks.isNotEmpty()) {
+                                shelves.add(Shelf.Lists.Items("trending", "Trending Now", trendingTracks))
                             }
 
-                            rcmdDeferred.await()?.let { json ->
-                                val list = json.optJSONObject("data")?.optJSONArray("item") ?: JSONArray()
-                                val tracks = mutableListOf<Track>()
-                                for (i in 0 until list.length()) {
-                                    val item = list.optJSONObject(i) ?: continue
-                                    tracks.add(toTrack(item))
-                                }
-                                if (tracks.isNotEmpty()) {
-                                    shelves.add(Shelf.Lists.Items("recommended", "Recommended For You", tracks))
-                                }
+                            val rcmdTracks = extractTracks(rcmdDeferred.await())
+                            if (rcmdTracks.isNotEmpty()) {
+                                shelves.add(Shelf.Lists.Items("recommended", "Recommended For You", rcmdTracks))
                             }
 
-                            preciousDeferred.await()?.let { json ->
-                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                                val tracks = mutableListOf<Track>()
-                                for (i in 0 until list.length()) {
-                                    val item = list.optJSONObject(i) ?: continue
-                                    tracks.add(toTrack(item))
-                                }
-                                if (tracks.isNotEmpty()) {
-                                    shelves.add(Shelf.Lists.Items("classics", "All-Time Classics", tracks))
-                                }
+                            val classicsTracks = extractTracks(preciousDeferred.await())
+                            if (classicsTracks.isNotEmpty()) {
+                                shelves.add(Shelf.Lists.Items("classics", "All-Time Classics", classicsTracks))
                             }
 
                             shelves
@@ -267,59 +253,43 @@ open class BilibiliExtension : ExtensionClient, SearchFeedClient, HomeFeedClient
                 else -> {
                     val paged = PagedData.Single<Shelf> {
                         coroutineScope {
-                            val topDeferred = async { runCatching { api.getMusicRanking("all") }.getOrNull() }
-                            val originDeferred = async { runCatching { api.getMusicRanking("origin") }.getOrNull() }
-                            val rookieDeferred = async { runCatching { api.getMusicRanking("rookie") }.getOrNull() }
+                            val topDeferred = async { runCatching { api.getMusicRanking() }.getOrNull() }
+                            val originDeferred = async { runCatching { api.getRegionRanking(28) }.getOrNull() }
+                            val coversDeferred = async { runCatching { api.getRegionRanking(31) }.getOrNull() }
+                            val vocaloidDeferred = async { runCatching { api.getRegionRanking(30) }.getOrNull() }
+                            val liveDeferred = async { runCatching { api.getRegionRanking(130) }.getOrNull() }
                             val newMusicDeferred = async { runCatching { api.getNewVideos(3, 1, 20) }.getOrNull() }
 
                             val shelves = mutableListOf<Shelf>()
 
-                            topDeferred.await()?.let { json ->
-                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                                val tracks = mutableListOf<Track>()
-                                for (i in 0 until list.length()) {
-                                    val item = list.optJSONObject(i) ?: continue
-                                    tracks.add(toTrack(item))
-                                }
-                                if (tracks.isNotEmpty()) {
-                                    shelves.add(Shelf.Lists.Items("top_ranking", "Top Music Ranking", tracks))
-                                }
+                            val topTracks = extractTracks(topDeferred.await())
+                            if (topTracks.isNotEmpty()) {
+                                shelves.add(Shelf.Lists.Items("top_ranking", "Top Music Ranking", topTracks))
                             }
 
-                            originDeferred.await()?.let { json ->
-                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                                val tracks = mutableListOf<Track>()
-                                for (i in 0 until list.length()) {
-                                    val item = list.optJSONObject(i) ?: continue
-                                    tracks.add(toTrack(item))
-                                }
-                                if (tracks.isNotEmpty()) {
-                                    shelves.add(Shelf.Lists.Items("origin_ranking", "Original Music", tracks))
-                                }
+                            val originTracks = extractTracks(originDeferred.await())
+                            if (originTracks.isNotEmpty()) {
+                                shelves.add(Shelf.Lists.Items("origin_ranking", "Original Music (原创音乐)", originTracks))
                             }
 
-                            rookieDeferred.await()?.let { json ->
-                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                                val tracks = mutableListOf<Track>()
-                                for (i in 0 until list.length()) {
-                                    val item = list.optJSONObject(i) ?: continue
-                                    tracks.add(toTrack(item))
-                                }
-                                if (tracks.isNotEmpty()) {
-                                    shelves.add(Shelf.Lists.Items("rookie_ranking", "Rising Creators", tracks))
-                                }
+                            val coversTracks = extractTracks(coversDeferred.await())
+                            if (coversTracks.isNotEmpty()) {
+                                shelves.add(Shelf.Lists.Items("covers_ranking", "Top Covers (翻唱热榜)", coversTracks))
                             }
 
-                            newMusicDeferred.await()?.let { json ->
-                                val list = json.optJSONObject("data")?.optJSONArray("archives") ?: JSONArray()
-                                val tracks = mutableListOf<Track>()
-                                for (i in 0 until list.length()) {
-                                    val item = list.optJSONObject(i) ?: continue
-                                    tracks.add(toTrack(item))
-                                }
-                                if (tracks.isNotEmpty()) {
-                                    shelves.add(Shelf.Lists.Items("new_releases", "Latest Releases", tracks))
-                                }
+                            val vocaloidTracks = extractTracks(vocaloidDeferred.await())
+                            if (vocaloidTracks.isNotEmpty()) {
+                                shelves.add(Shelf.Lists.Items("vocaloid_ranking", "Vocaloid & Virtual Singer", vocaloidTracks))
+                            }
+
+                            val liveTracks = extractTracks(liveDeferred.await())
+                            if (liveTracks.isNotEmpty()) {
+                                shelves.add(Shelf.Lists.Items("live_ranking", "Live Performances (音乐现场)", liveTracks))
+                            }
+
+                            val newTracks = extractTracks(newMusicDeferred.await())
+                            if (newTracks.isNotEmpty()) {
+                                shelves.add(Shelf.Lists.Items("new_releases", "Latest Releases (最新投稿)", newTracks))
                             }
 
                             shelves
