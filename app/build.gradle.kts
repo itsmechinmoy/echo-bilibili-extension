@@ -8,7 +8,7 @@ dependencies {
     compileOnly(libs.echo.common)
     compileOnly(libs.kotlin.stdlib)
     compileOnly(libs.kotlinx.serialization.json)
-    implementation(libs.okhttp)
+    compileOnly(libs.okhttp)
 }
 
 configurations.all {
@@ -28,6 +28,8 @@ configurations.all {
     exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core-jvm")
     exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-serialization-core")
     exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-serialization-json")
+    exclude(group = "com.squareup.okhttp3")
+    exclude(group = "com.squareup.okio")
 }
 
 java {

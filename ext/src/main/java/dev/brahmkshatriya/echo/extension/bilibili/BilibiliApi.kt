@@ -1,10 +1,6 @@
 package dev.brahmkshatriya.echo.extension.bilibili
 
 import dev.brahmkshatriya.echo.common.settings.Settings
-import okhttp3.Cookie
-import okhttp3.CookieJar
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -33,36 +29,35 @@ class BilibiliApi {
 
     private val cookieStore = ConcurrentHashMap<String, String>()
 
-    private val cookieJar = object : CookieJar {
-        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-            for (c in cookies) {
-                if (c.name.isNotEmpty() && c.value.isNotEmpty()) {
-                    cookieStore[c.name] = c.value
-                }
-            }
-        }
-
-        override fun loadForRequest(url: HttpUrl): List<Cookie> {
-            val list = mutableListOf<Cookie>()
-            val host = url.host
-            for ((k, v) in cookieStore) {
-                list.add(
-                    Cookie.Builder()
-                        .name(k)
-                        .value(v)
-                        .domain(if (host.contains("bilibili.com")) "bilibili.com" else host)
-                        .path("/")
-                        .build()
-                )
-            }
-            return list
-        }
-    }
-
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
-        .cookieJar(cookieJar)
+        .addInterceptor { chain ->
+            val original = chain.request()
+            val cookie = getCookieHeader()
+            val builder = original.newBuilder()
+                .header("User-Agent", USER_AGENT)
+                .header("Referer", REFERER)
+            if (cookie.isNotBlank() && original.header("Cookie") == null) {
+                builder.header("Cookie", cookie)
+            }
+            val response = chain.proceed(builder.build())
+            val setCookies = response.headers("Set-Cookie")
+            if (setCookies.isNotEmpty()) {
+                for (sc in setCookies) {
+                    val pair = sc.substringBefore(';').trim()
+                    val eq = pair.indexOf('=')
+                    if (eq > 0) {
+                        val k = pair.substring(0, eq).trim()
+                        val v = pair.substring(eq + 1).trim()
+                        if (k.isNotEmpty() && v.isNotEmpty()) {
+                            cookieStore[k] = v
+                        }
+                    }
+                }
+            }
+            response
+        }
         .build()
 
     @Volatile

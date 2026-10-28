@@ -10,12 +10,8 @@ dependencies {
     compileOnly(libs.echo.common)
     compileOnly(libs.kotlin.stdlib)
     compileOnly(libs.kotlinx.serialization.json)
+    compileOnly(libs.okhttp)
     compileOnly("org.json:json:20240303")
-
-    implementation(libs.okhttp) {
-        exclude(group = "org.jetbrains.kotlin")
-        exclude(group = "org.jetbrains.kotlinx")
-    }
 
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
