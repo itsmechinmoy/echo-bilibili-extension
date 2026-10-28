@@ -37,7 +37,10 @@ import dev.brahmkshatriya.echo.common.models.User
 import dev.brahmkshatriya.echo.common.settings.SettingSwitch
 import dev.brahmkshatriya.echo.common.settings.Settings
 import dev.brahmkshatriya.echo.extension.bilibili.BilibiliApi
-import okhttp3.Request
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -131,9 +134,58 @@ open class BilibiliExtension : ExtensionClient, SearchFeedClient, HomeFeedClient
 
     // --- SearchFeedClient ---
     override suspend fun loadSearchFeed(query: String): Feed<Shelf> {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            val paged = PagedData.Single<Shelf> {
+                coroutineScope {
+                    val rankingDeferred = async { runCatching { api.getMusicRanking("all") }.getOrNull() }
+                    val originDeferred = async { runCatching { api.getMusicRanking("origin") }.getOrNull() }
+                    val rookieDeferred = async { runCatching { api.getMusicRanking("rookie") }.getOrNull() }
+                    val classicsDeferred = async { runCatching { api.getPreciousVideos() }.getOrNull() }
+
+                    val shelves = mutableListOf<Shelf>()
+
+                    rankingDeferred.await()?.let { json ->
+                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+                        val tracks = (0 until list.length()).mapNotNull { list.optJSONObject(it)?.let { item -> toTrack(item) } }
+                        if (tracks.isNotEmpty()) {
+                            shelves.add(Shelf.Lists.Items("search_trending", "Trending Music", tracks))
+                        }
+                    }
+
+                    originDeferred.await()?.let { json ->
+                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+                        val tracks = (0 until list.length()).mapNotNull { list.optJSONObject(it)?.let { item -> toTrack(item) } }
+                        if (tracks.isNotEmpty()) {
+                            shelves.add(Shelf.Lists.Items("search_origin", "Original Music", tracks))
+                        }
+                    }
+
+                    rookieDeferred.await()?.let { json ->
+                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+                        val tracks = (0 until list.length()).mapNotNull { list.optJSONObject(it)?.let { item -> toTrack(item) } }
+                        if (tracks.isNotEmpty()) {
+                            shelves.add(Shelf.Lists.Items("search_rookie", "Rising Creators", tracks))
+                        }
+                    }
+
+                    classicsDeferred.await()?.let { json ->
+                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+                        val tracks = (0 until list.length()).mapNotNull { list.optJSONObject(it)?.let { item -> toTrack(item) } }
+                        if (tracks.isNotEmpty()) {
+                            shelves.add(Shelf.Lists.Items("search_classics", "All-Time Classics", tracks))
+                        }
+                    }
+
+                    shelves
+                }
+            }
+            return paged.toFeed()
+        }
+
         val paged = PagedData.Continuous<Shelf> { cont ->
             val page = cont?.toIntOrNull() ?: 1
-            val json = api.searchVideos(query, page)
+            val json = api.searchVideos(trimmed, page)
             val data = json.optJSONObject("data")
             val results = data?.optJSONArray("result") ?: JSONArray()
             val tracks = mutableListOf<Track>()
@@ -146,7 +198,7 @@ open class BilibiliExtension : ExtensionClient, SearchFeedClient, HomeFeedClient
             val hasMore = tracks.isNotEmpty() && page < 20
             val shelf = Shelf.Lists.Items(
                 id = "search_$page",
-                title = "Search Results - Page $page",
+                title = if (page == 1) "Search Results for \"$trimmed\"" else "More Results (Page $page)",
                 list = tracks
             )
             Page(listOf(shelf), if (hasMore) (page + 1).toString() else null)
@@ -157,37 +209,121 @@ open class BilibiliExtension : ExtensionClient, SearchFeedClient, HomeFeedClient
     // --- HomeFeedClient ---
     override suspend fun loadHomeFeed(): Feed<Shelf> {
         val tabs = listOf(
-            Tab("ranking", "Music Ranking"),
+            Tab("ranking", "Music Charts"),
             Tab("popular", "Popular & Trending")
         )
         return Feed(tabs) { tab ->
             when (tab?.id) {
                 "popular" -> {
-                    val paged = PagedData.Continuous<Shelf> { cont ->
-                        val page = cont?.toIntOrNull() ?: 1
-                        val json = api.getPopularVideos(page)
-                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                        val tracks = mutableListOf<Track>()
-                        for (i in 0 until list.length()) {
-                            val item = list.optJSONObject(i) ?: continue
-                            tracks.add(toTrack(item))
+                    val paged = PagedData.Single<Shelf> {
+                        coroutineScope {
+                            val trendingDeferred = async { runCatching { api.getPopularVideos(1, 20) }.getOrNull() }
+                            val rcmdDeferred = async { runCatching { api.getRecommendFeed() }.getOrNull() }
+                            val preciousDeferred = async { runCatching { api.getPreciousVideos() }.getOrNull() }
+
+                            val shelves = mutableListOf<Shelf>()
+
+                            trendingDeferred.await()?.let { json ->
+                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+                                val tracks = mutableListOf<Track>()
+                                for (i in 0 until list.length()) {
+                                    val item = list.optJSONObject(i) ?: continue
+                                    tracks.add(toTrack(item))
+                                }
+                                if (tracks.isNotEmpty()) {
+                                    shelves.add(Shelf.Lists.Items("trending", "Trending Now", tracks))
+                                }
+                            }
+
+                            rcmdDeferred.await()?.let { json ->
+                                val list = json.optJSONObject("data")?.optJSONArray("item") ?: JSONArray()
+                                val tracks = mutableListOf<Track>()
+                                for (i in 0 until list.length()) {
+                                    val item = list.optJSONObject(i) ?: continue
+                                    tracks.add(toTrack(item))
+                                }
+                                if (tracks.isNotEmpty()) {
+                                    shelves.add(Shelf.Lists.Items("recommended", "Recommended For You", tracks))
+                                }
+                            }
+
+                            preciousDeferred.await()?.let { json ->
+                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+                                val tracks = mutableListOf<Track>()
+                                for (i in 0 until list.length()) {
+                                    val item = list.optJSONObject(i) ?: continue
+                                    tracks.add(toTrack(item))
+                                }
+                                if (tracks.isNotEmpty()) {
+                                    shelves.add(Shelf.Lists.Items("classics", "All-Time Classics", tracks))
+                                }
+                            }
+
+                            shelves
                         }
-                        val shelf = Shelf.Lists.Items("popular_$page", "Trending", tracks)
-                        val hasMore = tracks.isNotEmpty() && page < 10
-                        Page(listOf(shelf), if (hasMore) (page + 1).toString() else null)
                     }
                     paged.toFeedData()
                 }
                 else -> {
                     val paged = PagedData.Single<Shelf> {
-                        val json = api.getMusicRanking()
-                        val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
-                        val tracks = mutableListOf<Track>()
-                        for (i in 0 until list.length()) {
-                            val item = list.optJSONObject(i) ?: continue
-                            tracks.add(toTrack(item))
+                        coroutineScope {
+                            val topDeferred = async { runCatching { api.getMusicRanking("all") }.getOrNull() }
+                            val originDeferred = async { runCatching { api.getMusicRanking("origin") }.getOrNull() }
+                            val rookieDeferred = async { runCatching { api.getMusicRanking("rookie") }.getOrNull() }
+                            val newMusicDeferred = async { runCatching { api.getNewVideos(3, 1, 20) }.getOrNull() }
+
+                            val shelves = mutableListOf<Shelf>()
+
+                            topDeferred.await()?.let { json ->
+                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+                                val tracks = mutableListOf<Track>()
+                                for (i in 0 until list.length()) {
+                                    val item = list.optJSONObject(i) ?: continue
+                                    tracks.add(toTrack(item))
+                                }
+                                if (tracks.isNotEmpty()) {
+                                    shelves.add(Shelf.Lists.Items("top_ranking", "Top Music Ranking", tracks))
+                                }
+                            }
+
+                            originDeferred.await()?.let { json ->
+                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+                                val tracks = mutableListOf<Track>()
+                                for (i in 0 until list.length()) {
+                                    val item = list.optJSONObject(i) ?: continue
+                                    tracks.add(toTrack(item))
+                                }
+                                if (tracks.isNotEmpty()) {
+                                    shelves.add(Shelf.Lists.Items("origin_ranking", "Original Music", tracks))
+                                }
+                            }
+
+                            rookieDeferred.await()?.let { json ->
+                                val list = json.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+                                val tracks = mutableListOf<Track>()
+                                for (i in 0 until list.length()) {
+                                    val item = list.optJSONObject(i) ?: continue
+                                    tracks.add(toTrack(item))
+                                }
+                                if (tracks.isNotEmpty()) {
+                                    shelves.add(Shelf.Lists.Items("rookie_ranking", "Rising Creators", tracks))
+                                }
+                            }
+
+                            newMusicDeferred.await()?.let { json ->
+                                val list = json.optJSONObject("data")?.optJSONArray("archives") ?: JSONArray()
+                                val tracks = mutableListOf<Track>()
+                                for (i in 0 until list.length()) {
+                                    val item = list.optJSONObject(i) ?: continue
+                                    tracks.add(toTrack(item))
+                                }
+                                if (tracks.isNotEmpty()) {
+                                    shelves.add(Shelf.Lists.Items("new_releases", "Latest Releases", tracks))
+                                }
+                            }
+
+                            shelves
                         }
-                        listOf(Shelf.Lists.Items("ranking", "Top Music Ranking", tracks))
                     }
                     paged.toFeedData()
                 }
@@ -543,13 +679,11 @@ open class BilibiliExtension : ExtensionClient, SearchFeedClient, HomeFeedClient
         val subUrl = normalizeCover(subtitles.getJSONObject(0).optString("subtitle_url"))
             ?: return lyrics
 
-        val req = Request.Builder()
-            .url(subUrl)
-            .header("User-Agent", BilibiliApi.USER_AGENT)
-            .header("Referer", BilibiliApi.REFERER)
-            .build()
-        val body = api.client.newCall(req).execute().body?.string() ?: return lyrics
-        val bodyJson = JSONObject(body)
+        val bodyJson = try {
+            api.getJson(subUrl)
+        } catch (e: Exception) {
+            return lyrics
+        }
         val bodyArray = bodyJson.optJSONArray("body") ?: JSONArray()
 
         val items = mutableListOf<Lyrics.Item>()

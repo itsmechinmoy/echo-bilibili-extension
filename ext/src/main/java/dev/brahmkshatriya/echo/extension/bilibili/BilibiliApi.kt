@@ -1,6 +1,8 @@
 package dev.brahmkshatriya.echo.extension.bilibili
 
 import dev.brahmkshatriya.echo.common.settings.Settings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -96,7 +98,7 @@ class BilibiliApi {
         settings?.putString("bili_cookie", cookieHeader)
     }
 
-    private fun ensureGuestIdentity() {
+    private suspend fun ensureGuestIdentity() = withContext(Dispatchers.IO) {
         if (!cookieStore.containsKey("buvid3")) {
             try {
                 val req = Request.Builder()
@@ -116,16 +118,15 @@ class BilibiliApi {
                     }
                 }
             } catch (e: Exception) {
-                // ignore, fall back to whatever is available
+                // ignore
             }
         }
     }
 
-    @Synchronized
-    private fun getMixinKey(forceRefresh: Boolean = false): String {
+    private suspend fun getMixinKey(forceRefresh: Boolean = false): String = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         if (!forceRefresh && cachedMixinKey != null && now - mixinKeyFetchedAt < 3600_000L) {
-            return cachedMixinKey!!
+            return@withContext cachedMixinKey!!
         }
         ensureGuestIdentity()
         val req = Request.Builder()
@@ -151,11 +152,11 @@ class BilibiliApi {
             val key = mixed.toString()
             cachedMixinKey = key
             mixinKeyFetchedAt = now
-            return key
+            return@withContext key
         }
     }
 
-    fun signWbi(params: Map<String, String>, forceRefreshKey: Boolean = false): String {
+    suspend fun signWbi(params: Map<String, String>, forceRefreshKey: Boolean = false): String = withContext(Dispatchers.IO) {
         val mixinKey = getMixinKey(forceRefreshKey)
         val sortedParams = sortedMapOf<String, String>()
         sortedParams.putAll(params)
@@ -174,10 +175,10 @@ class BilibiliApi {
         val md5 = MessageDigest.getInstance("MD5")
             .digest(toHash.toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
-        return "$queryStr&w_rid=$md5"
+        return@withContext "$queryStr&w_rid=$md5"
     }
 
-    private fun getJson(url: String): JSONObject {
+    suspend fun getJson(url: String): JSONObject = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
@@ -185,12 +186,12 @@ class BilibiliApi {
             .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IOException("Empty response from $url")
-            return JSONObject(body)
+            JSONObject(body)
         }
     }
 
     // 1. Search Videos
-    fun searchVideos(keyword: String, page: Int = 1, order: String = "totalrank"): JSONObject {
+    suspend fun searchVideos(keyword: String, page: Int = 1, order: String = "totalrank"): JSONObject {
         ensureGuestIdentity()
         val params = mapOf(
             "keyword" to keyword,
@@ -203,22 +204,43 @@ class BilibiliApi {
         return getJson(url)
     }
 
-    // 2. Music Ranking (rid=3 is Music partition on Bilibili)
-    fun getMusicRanking(): JSONObject {
+    // 2. Music Ranking (rid=3 is Music partition on Bilibili: all, origin, rookie)
+    suspend fun getMusicRanking(type: String = "all"): JSONObject {
         ensureGuestIdentity()
-        val url = "https://api.bilibili.com/x/web-interface/ranking/v2?rid=3&type=all"
+        val url = "https://api.bilibili.com/x/web-interface/ranking/v2?rid=3&type=$type"
+        return getJson(url)
+    }
+
+    // 2b. All-Time Classic Masterpieces (入站必刷)
+    suspend fun getPreciousVideos(): JSONObject {
+        ensureGuestIdentity()
+        val url = "https://api.bilibili.com/x/web-interface/popular/precious"
+        return getJson(url)
+    }
+
+    // 2c. Feed Recommendations (猜你喜欢 / 推荐)
+    suspend fun getRecommendFeed(): JSONObject {
+        ensureGuestIdentity()
+        val url = "https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?fresh_type=4&feed_version=V8&brush=0"
+        return getJson(url)
+    }
+
+    // 2d. Partition New Videos (最新投稿)
+    suspend fun getNewVideos(rid: Int = 3, page: Int = 1, pageSize: Int = 20): JSONObject {
+        ensureGuestIdentity()
+        val url = "https://api.bilibili.com/x/web-interface/newlist?rid=$rid&pn=$page&ps=$pageSize"
         return getJson(url)
     }
 
     // 3. Popular / Trending Videos
-    fun getPopularVideos(page: Int = 1, pageSize: Int = 20): JSONObject {
+    suspend fun getPopularVideos(page: Int = 1, pageSize: Int = 20): JSONObject {
         ensureGuestIdentity()
         val url = "https://api.bilibili.com/x/web-interface/popular?ps=$pageSize&pn=$page"
         return getJson(url)
     }
 
     // 4. Video Details (View)
-    fun getVideoView(bvid: String): JSONObject {
+    suspend fun getVideoView(bvid: String): JSONObject {
         ensureGuestIdentity()
         val params = mapOf("bvid" to bvid)
         val query = signWbi(params)
@@ -227,7 +249,7 @@ class BilibiliApi {
     }
 
     // 5. Playurl (Audio & Video Streams)
-    fun getPlayUrl(bvid: String, cid: Long, fnval: Int = 4048): JSONObject {
+    suspend fun getPlayUrl(bvid: String, cid: Long, fnval: Int = 4048): JSONObject {
         ensureGuestIdentity()
         val params = mapOf(
             "bvid" to bvid,
@@ -242,14 +264,14 @@ class BilibiliApi {
     }
 
     // 6. Related Videos (Radio & Suggestions)
-    fun getRelatedVideos(bvid: String): JSONObject {
+    suspend fun getRelatedVideos(bvid: String): JSONObject {
         ensureGuestIdentity()
         val url = "https://api.bilibili.com/x/web-interface/archive/related?bvid=$bvid"
         return getJson(url)
     }
 
     // 7. UP Loader (Artist) Info
-    fun getUpInfo(mid: Long): JSONObject {
+    suspend fun getUpInfo(mid: Long): JSONObject {
         ensureGuestIdentity()
         val params = mapOf("mid" to mid.toString())
         val query = signWbi(params)
@@ -258,7 +280,7 @@ class BilibiliApi {
     }
 
     // 8. UP Loader (Artist) Videos
-    fun getUpVideos(mid: Long, page: Int = 1, pageSize: Int = 30): JSONObject {
+    suspend fun getUpVideos(mid: Long, page: Int = 1, pageSize: Int = 30): JSONObject {
         ensureGuestIdentity()
         val params = mapOf(
             "mid" to mid.toString(),
@@ -272,28 +294,28 @@ class BilibiliApi {
     }
 
     // 9. User Favorite Folders (Playlists)
-    fun getUserFavoriteFolders(mid: Long): JSONObject {
+    suspend fun getUserFavoriteFolders(mid: Long): JSONObject {
         ensureGuestIdentity()
         val url = "https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=$mid"
         return getJson(url)
     }
 
     // 10. Favorite Folder Items
-    fun getFavoriteFolderItems(mediaId: Long, page: Int = 1, pageSize: Int = 20): JSONObject {
+    suspend fun getFavoriteFolderItems(mediaId: Long, page: Int = 1, pageSize: Int = 20): JSONObject {
         ensureGuestIdentity()
         val url = "https://api.bilibili.com/x/v3/fav/resource/list?media_id=$mediaId&pn=$page&ps=$pageSize&platform=web&order=mtime&type=0"
         return getJson(url)
     }
 
     // 11. Subtitles / CC Lyrics
-    fun getSubtitles(bvid: String, cid: Long): JSONObject {
+    suspend fun getSubtitles(bvid: String, cid: Long): JSONObject {
         ensureGuestIdentity()
         val url = "https://api.bilibili.com/x/player/v2?cid=$cid&bvid=$bvid"
         return getJson(url)
     }
 
     // 12. Current Logged-in User Profile
-    fun getUserProfile(): JSONObject {
+    suspend fun getUserProfile(): JSONObject {
         ensureGuestIdentity()
         val url = "https://api.bilibili.com/x/web-interface/nav"
         return getJson(url)
