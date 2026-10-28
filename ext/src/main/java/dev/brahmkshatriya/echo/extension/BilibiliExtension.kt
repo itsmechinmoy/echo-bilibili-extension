@@ -281,7 +281,16 @@ open class BilibiliExtension : ExtensionClient, SearchFeedClient, HomeFeedClient
     ): Streamable.Media {
         val parts = streamable.id.split(":")
         val bvid = parts[0]
-        val cid = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+        var cid = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+        if (cid == 0L) {
+            val view = api.getVideoView(bvid)
+            val pages = view.optJSONObject("data")?.optJSONArray("pages")
+            cid = if (pages != null && pages.length() > 0) {
+                pages.getJSONObject(0).optLong("cid")
+            } else {
+                view.optJSONObject("data")?.optLong("cid") ?: 0L
+            }
+        }
         val requestedQuality = parts.getOrNull(2)
 
         val playData = api.getPlayUrl(bvid, cid).optJSONObject("data")
